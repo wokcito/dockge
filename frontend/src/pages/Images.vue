@@ -48,6 +48,10 @@
                     <font-awesome-icon icon="rocket" class="me-1" />
                     {{ $t("buildImage") }}
                 </button>
+                <button class="btn btn-normal me-2" :disabled="processing" @click="openUploadDialog">
+                    <font-awesome-icon icon="upload" class="me-1" />
+                    {{ $t("uploadImage") }}
+                </button>
                 <button class="btn btn-danger" :disabled="processing" @click="showPruneDialog = true">
                     <font-awesome-icon icon="trash" class="me-1" />
                     {{ $t("pruneImages") }}
@@ -156,6 +160,32 @@
                 </div>
             </BModal>
 
+            <!-- Upload Image Modal -->
+            <BModal v-model="showUploadDialog" :title="$t('uploadImage')" hide-footer>
+                <p class="form-text">{{ $t("uploadImageHelp") }}</p>
+                <div class="mb-3">
+                    <label for="imageFile" class="form-label">{{ $t("chooseImageFile") }}</label>
+                    <input id="imageFile" type="file" class="form-control" accept=".tar,.tar.gz,.tgz" :disabled="processing" @change="onFileSelected">
+                </div>
+                <div v-if="processing" class="mb-3">
+                    <div class="progress">
+                        <div
+                            class="progress-bar"
+                            role="progressbar"
+                            :style="{ width: uploadProgress + '%' }"
+                            :aria-valuenow="uploadProgress"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                        >
+                            {{ uploadProgress }}%
+                        </div>
+                    </div>
+                </div>
+                <button class="btn btn-primary" :disabled="!selectedFile || processing" @click="uploadImage">
+                    {{ $t("uploadImage") }}
+                </button>
+            </BModal>
+
             <!-- Prune Confirmation Modal -->
             <BModal v-model="showPruneDialog" :okTitle="$t('pruneImages')" okVariant="danger" @ok="pruneImages">
                 <p><strong class="text-uppercase text-danger">{{ $t("warning") }}</strong></p>
@@ -167,6 +197,9 @@
 </template>
 
 <script>
+// Kept safely under Socket.IO's default 1 MB per-packet limit
+const UPLOAD_CHUNK_SIZE = 512 * 1024;
+
 export default {
     components: {
     },
@@ -180,12 +213,15 @@ export default {
             showPruneDialog: false,
             showPullDialog: false,
             showBuildDialog: false,
+            showUploadDialog: false,
             selectedImage: null,
             pullImageName: "",
             buildImageName: "",
             dockerfileContent: "",
             searchText: "",
             pullProgress: null,
+            selectedFile: null,
+            uploadProgress: 0,
         };
     },
     computed: {
@@ -330,6 +366,87 @@ export default {
                     this.dockerfileContent = "";
                 }
             });
+        },
+
+        /**
+         * Reset upload state and show the upload dialog
+         */
+        openUploadDialog() {
+            this.selectedFile = null;
+            this.uploadProgress = 0;
+            this.showUploadDialog = true;
+        },
+
+        /**
+         * Track the file chosen in the upload dialog's file input
+         * @param {Event} e - The file input change event
+         */
+        onFileSelected(e) {
+            this.selectedFile = e.target.files[0] || null;
+        },
+
+        /**
+         * Promise wrapper around emitAgent, for use with async/await
+         * @param {string} event - Agent socket event name
+         * @param {...*} args - Arguments to pass to the event
+         * @returns {Promise<object>} The response from the server
+         */
+        emitAgentAsync(event, ...args) {
+            return new Promise((resolve) => {
+                this.$root.emitAgent(this.endpoint, event, ...args, resolve);
+            });
+        },
+
+        /**
+         * Upload the selected file in chunks and load it as a Docker image
+         */
+        async uploadImage() {
+            const file = this.selectedFile;
+            if (!file) {
+                return;
+            }
+
+            this.processing = true;
+            this.uploadProgress = 0;
+
+            const startRes = await this.emitAgentAsync("startImageUpload", file.name, file.size);
+            if (!startRes.ok) {
+                this.processing = false;
+                this.$root.toastRes(startRes);
+                return;
+            }
+
+            const uploadId = startRes.uploadId;
+            const totalChunks = Math.ceil(file.size / UPLOAD_CHUNK_SIZE) || 1;
+
+            for (let index = 0; index < totalChunks; index++) {
+                const start = index * UPLOAD_CHUNK_SIZE;
+                const end = Math.min(start + UPLOAD_CHUNK_SIZE, file.size);
+                const buf = await file.slice(start, end).arrayBuffer();
+
+                const chunkRes = await this.emitAgentAsync("uploadImageChunk", uploadId, index, buf);
+                if (!chunkRes.ok) {
+                    this.emitAgentAsync("cancelImageUpload", uploadId);
+                    this.processing = false;
+                    this.$root.toastRes(chunkRes);
+                    return;
+                }
+
+                this.uploadProgress = Math.round(((index + 1) / totalChunks) * 100);
+            }
+
+            this.pullProgress = this.$t("loadingImage");
+            const finishRes = await this.emitAgentAsync("finishImageUpload", uploadId);
+            this.pullProgress = null;
+            this.processing = false;
+
+            this.$root.toastRes(finishRes);
+            if (finishRes.ok) {
+                this.loadImages();
+                this.loadDiskUsage();
+                this.selectedFile = null;
+                this.showUploadDialog = false;
+            }
         },
 
         /**

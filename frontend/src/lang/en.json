@@ -185,5 +185,9 @@
     "Image Deleted": "Image Deleted",
     "Image Pulled": "Image Pulled",
     "Image Built": "Image Built",
-    "Images Pruned": "Images Pruned"
+    "Images Pruned": "Images Pruned",
+    "uploadImage": "Upload Image",
+    "chooseImageFile": "Choose an image file (.tar)",
+    "uploadImageHelp": "Upload a .tar file created with 'docker save' to load it directly on this host.",
+    "loadingImage": "Loading image..."
 }

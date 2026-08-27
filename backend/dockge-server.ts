@@ -80,6 +80,14 @@ export class DockgeServer {
 
     stacksDir : string = "";
 
+    uploadsDir : string = "";
+
+    /**
+     * Max size (in bytes) accepted for a single uploaded Docker image tar.
+     * Configurable via DOCKGE_MAX_IMAGE_UPLOAD_SIZE (bytes). Defaults to 10 GiB.
+     */
+    maxImageUploadSize : number = 10 * 1024 * 1024 * 1024;
+
     /**
      *
      */
@@ -156,6 +164,14 @@ export class DockgeServer {
         this.config.stacksDir = args.stacksDir || process.env.DOCKGE_STACKS_DIR || defaultStacksDir;
         this.config.enableConsole = args.enableConsole || process.env.DOCKGE_ENABLE_CONSOLE === "true" || false;
         this.stacksDir = this.config.stacksDir;
+        this.uploadsDir = path.join(this.config.dataDir, "uploads");
+
+        if (process.env.DOCKGE_MAX_IMAGE_UPLOAD_SIZE) {
+            const parsed = Number(process.env.DOCKGE_MAX_IMAGE_UPLOAD_SIZE);
+            if (Number.isFinite(parsed) && parsed > 0) {
+                this.maxImageUploadSize = parsed;
+            }
+        }
 
         log.debug("server", this.config);
 
@@ -558,6 +574,14 @@ export class DockgeServer {
         if (!fs.existsSync(this.stacksDir)) {
             fs.mkdirSync(this.stacksDir, { recursive: true });
         }
+
+        // Uploads directory is only used for in-flight image uploads, nothing here
+        // can legitimately survive a restart, so wipe it clean on every boot.
+        fs.rmSync(this.uploadsDir, {
+            recursive: true,
+            force: true,
+        });
+        fs.mkdirSync(this.uploadsDir, { recursive: true });
 
         log.info("server", `Data Dir: ${this.config.dataDir}`);
     }
