@@ -449,7 +449,6 @@ export class Stack {
         if (!res.stdout) {
             return null;
         }
-
         let dockerResponse = res.stdout.toString();
         try {
             const output = dockerResponse.trim();
@@ -470,7 +469,6 @@ export class Stack {
      * First, we need to get the number of containers that are in the exited state
      * Then read all the containers and check if they are exited with status 0 (OK) or something else (Not OK)
      */
-
     static async isComposeExitClean(composeStack : ComposeStack) : Promise<number> {
         // Safer parsing with regex to avoid crashes on unexpected status strings
         const match = composeStack.Status.match(/\((\d+)\)/);
