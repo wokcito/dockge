@@ -3,6 +3,8 @@ import { DockgeServer } from "../dockge-server";
 import { callbackError, callbackResult, checkLogin, DockgeSocket, ValidationError } from "../util-server";
 import { DeleteOptions, Stack } from "../stack";
 import { AgentSocket } from "../../common/agent-socket";
+import { Settings } from "../settings";
+import { LooseObject } from "../../common/util-common";
 
 export class DockerSocketHandler extends AgentSocketHandler {
     create(socket : DockgeSocket, server : DockgeServer, agentSocket : AgentSocket) {
@@ -345,6 +347,50 @@ export class DockerSocketHandler extends AgentSocketHandler {
                     ok: true,
                     dockerNetworkList,
                 }, callback);
+            } catch (e) {
+                callbackError(e, callback);
+            }
+        });
+
+        // setStackGroup - purely visual/organizational, no filesystem changes
+        agentSocket.on("setStackGroup", async (stackName : unknown, group : unknown, callback) => {
+            try {
+                checkLogin(socket);
+
+                if (typeof(stackName) !== "string") {
+                    throw new ValidationError("Stack name must be a string");
+                }
+                if (group !== null && typeof(group) !== "string") {
+                    throw new ValidationError("Group must be a string or null");
+                }
+
+                // Throws if the stack doesn't exist
+                await Stack.getStack(server, stackName);
+
+                const map : LooseObject = (await Settings.get("stackGroups")) || {};
+                const trimmed = typeof(group) === "string" ? group.trim() : "";
+
+                if (trimmed === "") {
+                    delete map[stackName];
+                } else {
+                    const segments = trimmed.split("/").map((s : string) => s.trim());
+                    if (segments.some((s : string) => s === "")) {
+                        throw new ValidationError("Folder path segments can't be empty");
+                    }
+                    if (segments.length > 2) {
+                        throw new ValidationError("Only one level of subfolder is supported");
+                    }
+                    map[stackName] = segments.join("/");
+                }
+
+                await Settings.set("stackGroups", map);
+
+                callbackResult({
+                    ok: true,
+                    msg: trimmed ? "Moved" : "Removed from group",
+                    msgi18n: true,
+                }, callback);
+                server.sendStackList();
             } catch (e) {
                 callbackError(e, callback);
             }

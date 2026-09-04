@@ -589,6 +589,7 @@ export class DockgeServer {
         let socketList = this.io.sockets.sockets.values();
 
         let stackList;
+        let groupMap : LooseObject = (await Settings.get("stackGroups")) || {};
 
         for (let socket of socketList) {
             let dockgeSocket = socket as DockgeSocket;
@@ -604,7 +605,10 @@ export class DockgeServer {
                 let map : Map<string, object> = new Map();
 
                 for (let [ stackName, stack ] of stackList) {
-                    map.set(stackName, stack.toSimpleJSON(dockgeSocket.endpoint));
+                    map.set(stackName, {
+                        ...stack.toSimpleJSON(dockgeSocket.endpoint),
+                        group: groupMap[stackName] || null,
+                    });
                 }
 
                 log.debug("server", "Send stack list to user: " + dockgeSocket.id + " (" + dockgeSocket.endpoint + ")");
