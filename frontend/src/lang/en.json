@@ -152,5 +152,12 @@
     "rmCode": "rm",
     "rmRfCode": "rm -rf",
     "envVarCode": "DOCKGE_ENABLE_CONSOLE=true",
-    "confirmLeaveStack": "You are currently editing a stack. Are you sure you want to leave?"
+    "confirmLeaveStack": "You are currently editing a stack. Are you sure you want to leave?",
+    "moveToFolder": "Move to",
+    "newFolder": "New folder...",
+    "newFolderNamePrompt": "Folder name",
+    "newFolderNameHelp": "e.g. services, or services/networking for a subfolder",
+    "removeFromFolder": "Remove from folder",
+    "Moved": "Moved",
+    "Removed from group": "Removed from group"
 }

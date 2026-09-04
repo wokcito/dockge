@@ -73,16 +73,63 @@
                     <span v-else>{{ agent.endpoint }}</span>
                 </div>
 
-                <StackListItem
-                    v-for="(item, i) in agent.stacks"
-                    v-show="$root.agentCount === 1 || !closedAgents.get(agent.endpoint)"
-                    :key="i"
-                    :stack="item"
-                    :isSelectMode="selectMode"
-                    :isSelected="isSelected"
-                    :select="select"
-                    :deselect="deselect"
-                />
+                <div v-show="$root.agentCount === 1 || !closedAgents.get(agent.endpoint)">
+                    <StackListItem
+                        v-for="(item, i) in agent.ungroupedStacks"
+                        :key="'u' + i"
+                        :stack="item"
+                        :isSelectMode="selectMode"
+                        :isSelected="isSelected"
+                        :select="select"
+                        :deselect="deselect"
+                    />
+
+                    <div v-for="folder in agent.topFolders" :key="folder.name" class="folder-block">
+                        <div class="p-2 group-select" @click="toggleFolder(agent.endpoint, folder.name)">
+                            <span class="me-1">
+                                <font-awesome-icon v-show="isFolderClosed(agent.endpoint, folder.name)" icon="chevron-circle-right" />
+                                <font-awesome-icon v-show="!isFolderClosed(agent.endpoint, folder.name)" icon="chevron-circle-down" />
+                            </span>
+                            <font-awesome-icon icon="folder" class="me-1" />
+                            <span>{{ folder.name }}</span>
+                        </div>
+
+                        <template v-if="!isFolderClosed(agent.endpoint, folder.name)">
+                            <StackListItem
+                                v-for="(item, i) in folder.directStacks"
+                                :key="'d' + i"
+                                :stack="item"
+                                :isSelectMode="selectMode"
+                                :isSelected="isSelected"
+                                :select="select"
+                                :deselect="deselect"
+                            />
+
+                            <div v-for="sub in folder.subfolders" :key="sub.name" class="folder-block subfolder-block">
+                                <div class="p-2 group-select" @click="toggleFolder(agent.endpoint, folder.name + '/' + sub.name)">
+                                    <span class="me-1">
+                                        <font-awesome-icon v-show="isFolderClosed(agent.endpoint, folder.name + '/' + sub.name)" icon="chevron-circle-right" />
+                                        <font-awesome-icon v-show="!isFolderClosed(agent.endpoint, folder.name + '/' + sub.name)" icon="chevron-circle-down" />
+                                    </span>
+                                    <font-awesome-icon icon="folder" class="me-1" />
+                                    <span>{{ sub.name }}</span>
+                                </div>
+
+                                <template v-if="!isFolderClosed(agent.endpoint, folder.name + '/' + sub.name)">
+                                    <StackListItem
+                                        v-for="(item, i) in sub.stacks"
+                                        :key="'s' + i"
+                                        :stack="item"
+                                        :isSelectMode="selectMode"
+                                        :isSelected="isSelected"
+                                        :select="select"
+                                        :deselect="deselect"
+                                    />
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -115,6 +162,7 @@ export default {
                 active: null,
                 tags: null },
             closedAgents: new Map(),
+            closedFolders: new Map(),
             processing: false,
         };
     },
@@ -217,7 +265,7 @@ export default {
                     return acc;
                 }, new Map()).entries()
             ].map(([ endpoint, stacks ]) => ({ endpoint,
-                stacks }));
+                ...this.buildFolderTree(stacks) }));
 
             groups.sort((a, b) => {
                 if (a.endpoint === "current" && b.endpoint !== "current") {
@@ -233,7 +281,13 @@ export default {
         },
         /** flat list for convenience (button states, updateAll, selection watchers) */
         flatStackList() {
-            return this.agentStackList.flatMap(g => g.stacks);
+            return this.agentStackList.flatMap(g => [
+                ...g.ungroupedStacks,
+                ...g.topFolders.flatMap(f => [
+                    ...f.directStacks,
+                    ...f.subfolders.flatMap(s => s.stacks),
+                ]),
+            ]);
         },
         isDarkTheme() {
             return document.body.classList.contains("dark");
@@ -302,6 +356,74 @@ export default {
         },
         clearSearchText() {
             this.searchText = "";
+        },
+        /**
+         * Split a flat stack array into ungrouped stacks and a one-level
+         * folder/subfolder tree, based on each stack's `group` field
+         * (e.g. "services" or "services/networking"). Purely visual — does
+         * not touch the filesystem.
+         * @param {Array} stacks Stacks belonging to one endpoint
+         * @returns {object} { ungroupedStacks, topFolders }
+         */
+        buildFolderTree(stacks) {
+            const ungroupedStacks = [];
+            const topMap = new Map();
+
+            for (const stack of stacks) {
+                if (!stack.group) {
+                    ungroupedStacks.push(stack);
+                    continue;
+                }
+
+                const [ topName, subName ] = stack.group.split("/");
+                if (!topMap.has(topName)) {
+                    topMap.set(topName, { name: topName,
+                        directStacks: [],
+                        subMap: new Map() });
+                }
+                const top = topMap.get(topName);
+
+                if (subName) {
+                    if (!top.subMap.has(subName)) {
+                        top.subMap.set(subName, []);
+                    }
+                    top.subMap.get(subName).push(stack);
+                } else {
+                    top.directStacks.push(stack);
+                }
+            }
+
+            const topFolders = [ ...topMap.values() ]
+                .map(top => ({
+                    name: top.name,
+                    directStacks: top.directStacks,
+                    subfolders: [ ...top.subMap.entries() ]
+                        .map(([ name, subStacks ]) => ({ name,
+                            stacks: subStacks }))
+                        .sort((a, b) => a.name.localeCompare(b.name)),
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+
+            return { ungroupedStacks,
+                topFolders };
+        },
+        /**
+         * Toggle the collapsed state of a folder or subfolder
+         * @param {string} endpoint Agent endpoint the folder belongs to
+         * @param {string} path Folder path, e.g. "services" or "services/networking"
+         * @returns {void}
+         */
+        toggleFolder(endpoint, path) {
+            const key = `${endpoint}::${path}`;
+            this.closedFolders.set(key, !this.closedFolders.get(key));
+        },
+        /**
+         * @param {string} endpoint Agent endpoint the folder belongs to
+         * @param {string} path Folder path, e.g. "services" or "services/networking"
+         * @returns {boolean} Whether the folder is currently collapsed
+         */
+        isFolderClosed(endpoint, path) {
+            return !!this.closedFolders.get(`${endpoint}::${path}`);
         },
         updateFilter(newFilter) {
             this.filterState = newFilter;
@@ -451,5 +573,21 @@ export default {
     display: flex;
     align-items: center;
     user-select: none;
+}
+
+.group-select {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: $dark-font-color3;
+    padding-left: 10px;
+    padding-right: 10px;
+    display: flex;
+    align-items: center;
+    user-select: none;
+}
+
+.subfolder-block {
+    margin-left: 20px;
 }
 </style>
